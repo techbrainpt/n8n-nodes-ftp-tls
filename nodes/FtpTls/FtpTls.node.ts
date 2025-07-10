@@ -10,7 +10,7 @@ import {
 import { Client as BasicFtpClient } from 'basic-ftp';
 import SftpClient from 'ssh2-sftp-client';
 import * as path from 'path';
-import { Writable } from 'stream';
+import { Writable, Readable } from 'stream';
 
 export class FtpTls implements INodeType {
 	description: INodeTypeDescription = {
@@ -303,7 +303,8 @@ export class FtpTls implements INodeType {
                                                 uploadBuffer = Buffer.from(fileContent);
                                         }
 
-					await client.uploadFrom(uploadBuffer as any, remotePath);
+                                        const stream = Readable.from(uploadBuffer);
+                                        await client.uploadFrom(stream, remotePath);
 					return {
 						json: {
 							success: true,
