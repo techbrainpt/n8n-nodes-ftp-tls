@@ -18,7 +18,8 @@
   },
   "include": [
     "credentials/**/*",
-    "nodes/**/*"
+    "nodes/**/*",
+    "types/**/*"
   ],
   "exclude": [
     "dist",
