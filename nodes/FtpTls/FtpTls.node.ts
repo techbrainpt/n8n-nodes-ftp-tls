@@ -1,30 +1,35 @@
-import {
-        IExecuteFunctions,
-        INodeExecutionData,
-        INodeType,
-        INodeTypeDescription,
-        NodeConnectionType,
-        NodeOperationError,
+import type {
+	IExecuteFunctions,
+	INodeExecutionData,
+	INodeType,
+	INodeTypeDescription,
+	IDataObject,
+	IBinaryData,
 } from 'n8n-workflow';
 
-import { Client as BasicFtpClient } from 'basic-ftp';
+import { 
+	NodeConnectionType, 
+	NodeOperationError 
+} from 'n8n-workflow';
+
+import { Client as FtpClient } from 'basic-ftp';
 import SftpClient from 'ssh2-sftp-client';
-import * as path from 'path';
-import { Writable, Readable } from 'stream';
+import { basename } from 'path';
 
 export class FtpTls implements INodeType {
 	description: INodeTypeDescription = {
 		displayName: 'FTP/FTPS with TLS',
 		name: 'ftpTls',
 		icon: 'fa:server',
-		group: ['input', 'output'],
+		group: ['input'],
 		version: 1,
-		description: 'Transfer files via FTP/FTPS with TLS support',
+		subtitle: '={{$parameter["operation"] + ": " + $parameter["path"]}}',
+		description: 'FTP/FTPS with TLS support',
 		defaults: {
 			name: 'FTP/FTPS with TLS',
 		},
-                inputs: [NodeConnectionType.Main],
-                outputs: [NodeConnectionType.Main],
+		inputs: [NodeConnectionType.Main],
+		outputs: [NodeConnectionType.Main],
 		credentials: [
 			{
 				name: 'ftpTls',
@@ -39,10 +44,10 @@ export class FtpTls implements INodeType {
 				noDataExpression: true,
 				options: [
 					{
-						name: 'Delete',
-						value: 'delete',
-						description: 'Delete a file or folder',
-						action: 'Delete a file or folder',
+						name: 'List',
+						value: 'list',
+						description: 'List files and folders',
+						action: 'List files and folders',
 					},
 					{
 						name: 'Download',
@@ -51,107 +56,93 @@ export class FtpTls implements INodeType {
 						action: 'Download a file',
 					},
 					{
-						name: 'List',
-						value: 'list',
-						description: 'List contents of a folder',
-						action: 'List contents of a folder',
-					},
-					{
-						name: 'Rename',
-						value: 'rename',
-						description: 'Rename/move a file or folder',
-						action: 'Rename a file or folder',
-					},
-					{
 						name: 'Upload',
 						value: 'upload',
 						description: 'Upload a file',
 						action: 'Upload a file',
 					},
+					{
+						name: 'Delete',
+						value: 'delete',
+						description: 'Delete a file or folder',
+						action: 'Delete a file or folder',
+					},
+					{
+						name: 'Rename',
+						value: 'rename',
+						description: 'Rename a file or folder',
+						action: 'Rename a file or folder',
+					},
 				],
-				default: 'download',
+				default: 'list',
 			},
 			{
 				displayName: 'Path',
 				name: 'path',
 				type: 'string',
-				default: '',
-				placeholder: '/remote/path',
+				default: '/',
 				description: 'The remote path to operate on',
 			},
 			{
 				displayName: 'Recursive',
 				name: 'recursive',
 				type: 'boolean',
-				displayOptions: {
-					show: {
-						operation: ['delete', 'list'],
-					},
-				},
 				default: false,
-				description: 'Whether to perform operation recursively',
-			},
-			{
-				displayName: 'New Path',
-				name: 'newPath',
-				type: 'string',
+				description: 'Whether to perform the operation recursively',
 				displayOptions: {
 					show: {
-						operation: ['rename'],
+						operation: ['list', 'delete'],
 					},
 				},
-				default: '',
-				description: 'The new path for rename operation',
 			},
 			{
-				displayName: 'Binary File',
+				displayName: 'Binary Property Name',
+				name: 'binaryPropertyName',
+				type: 'string',
+				default: 'data',
+				description: 'Name of the binary property to store the file',
+				displayOptions: {
+					show: {
+						operation: ['download', 'upload'],
+					},
+				},
+			},
+			{
+				displayName: 'Binary Data',
 				name: 'binaryData',
 				type: 'boolean',
+				default: false,
+				description: 'Whether to upload binary data',
 				displayOptions: {
 					show: {
 						operation: ['upload'],
 					},
 				},
-				default: false,
-				description: 'Whether the file is binary',
 			},
 			{
 				displayName: 'File Content',
 				name: 'fileContent',
 				type: 'string',
+				default: '',
+				description: 'The content of the file to upload',
 				displayOptions: {
 					show: {
 						operation: ['upload'],
 						binaryData: [false],
 					},
 				},
+			},
+			{
+				displayName: 'New Path',
+				name: 'newPath',
+				type: 'string',
 				default: '',
-				description: 'The content of the file to upload',
-			},
-			{
-				displayName: 'Property Name',
-				name: 'binaryPropertyName',
-				type: 'string',
+				description: 'The new path for the file or folder',
 				displayOptions: {
 					show: {
-						operation: ['upload'],
-						binaryData: [true],
+						operation: ['rename'],
 					},
 				},
-				default: 'data',
-				description: 'Name of the binary property containing the file data',
-			},
-			{
-				displayName: 'Put Output File in Field',
-				name: 'binaryPropertyName',
-				type: 'string',
-				displayOptions: {
-					show: {
-						operation: ['download'],
-					},
-				},
-				default: 'data',
-				description: 'Name of the binary property to put the file in',
 			},
 		],
 	};
@@ -160,327 +151,279 @@ export class FtpTls implements INodeType {
 		const items = this.getInputData();
 		const returnData: INodeExecutionData[] = [];
 
-		const credentials = await this.getCredentials('ftpTls');
-		const operation = this.getNodeParameter('operation', 0) as string;
+		for (let i = 0; i < items.length; i++) {
+			try {
+				const credentials = await this.getCredentials('ftpTls', i);
+				const operation = this.getNodeParameter('operation', i) as string;
 
-                for (let i = 0; i < items.length; i++) {
-                        try {
-                                if (credentials.protocol === 'sftp') {
-                                        const result = await (this as unknown as FtpTls).executeSftpOperation(this, i, credentials, operation);
-                                        returnData.push(result);
-                                } else {
-                                        const result = await (this as unknown as FtpTls).executeFtpOperation(this, i, credentials, operation);
-                                        returnData.push(result);
-                                }
-                        } catch (error: any) {
-				if (this.continueOnFail()) {
-					returnData.push({
-						json: {
-							error: error.message,
-						},
-						pairedItem: {
-							item: i,
-						},
-					});
-					continue;
+				let result;
+				if (credentials.protocol === 'sftp') {
+					result = await (this as any).executeSftpOperation.call(this, i, credentials, operation);
+				} else {
+					result = await (this as any).executeFtpOperation.call(this, i, credentials, operation);
 				}
-				throw error;
+
+				returnData.push({ json: result });
+			} catch (error) {
+				const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+				returnData.push({
+					json: {
+						error: errorMessage,
+					},
+				});
 			}
 		}
 
 		return [returnData];
 	}
 
-        private async executeFtpOperation(
-                context: IExecuteFunctions,
-                itemIndex: number,
-                credentials: any,
-                operation: string,
-        ): Promise<INodeExecutionData> {
-		const client = new BasicFtpClient();
-		client.ftp.verbose = false;
+	// @ts-ignore
+	private async executeFtpOperation(
+		this: IExecuteFunctions,
+		itemIndex: number,
+		credentials: IDataObject,
+		operation: string,
+	): Promise<IDataObject> {
+		const client = new FtpClient();
+		const remotePath = this.getNodeParameter('path', itemIndex) as string;
+
+		// Configure TLS options
+		const tlsOptions: any = {
+			host: credentials.host as string,
+			port: credentials.port as number,
+			user: credentials.username as string,
+			password: credentials.password as string,
+		};
+
+		// Configure security based on protocol
+		if (credentials.protocol === 'ftps-explicit' || credentials.protocol === 'ftps-implicit') {
+			tlsOptions.secure = credentials.protocol === 'ftps-implicit';
+			tlsOptions.secureOptions = credentials.security === 'strict' ? 
+				{ minVersion: 'TLSv1.2' } : 
+				{ minVersion: 'TLSv1.2', maxVersion: 'TLSv1.3' };
+			
+			if (credentials.ignoreSSLIssues) {
+				tlsOptions.secureOptions.rejectUnauthorized = false;
+			}
+		}
 
 		try {
-			// Configure TLS for FTPS
-			if (credentials.protocol === 'ftps-explicit' || credentials.protocol === 'ftps-implicit') {
-				const tlsOptions: any = {
-					host: credentials.host,
-					port: credentials.port,
-					secure: credentials.protocol === 'ftps-implicit',
-					secureOptions: credentials.security === 'legacy' ? {} : { secureProtocol: 'TLSv1_2_method' },
-					rejectUnauthorized: !credentials.ignoreSSLIssues,
-				};
-
-				if (credentials.protocol === 'ftps-explicit') {
-					await client.access({
-						host: credentials.host,
-						port: credentials.port || 21,
-						user: credentials.username,
-						password: credentials.password,
-						secure: false,
-						secureOptions: tlsOptions.secureOptions,
-					});
-					await client.ensureDir('/');
-					await client.ftp.send('AUTH TLS');
-				} else {
-					await client.access({
-						host: credentials.host,
-						port: credentials.port || 990,
-						user: credentials.username,
-						password: credentials.password,
-						secure: true,
-						secureOptions: tlsOptions.secureOptions,
-					});
-				}
-			} else {
-				await client.access({
-					host: credentials.host,
-					port: credentials.port || 21,
-					user: credentials.username,
-					password: credentials.password,
-				});
-			}
-
-                        const remotePath = context.getNodeParameter('path', itemIndex) as string;
+			await client.access(tlsOptions);
 
 			switch (operation) {
-                                case 'list':
-					const list = await client.list(remotePath);
+				case 'list':
+					const files = await client.list(remotePath);
 					return {
-						json: {
-							files: list.map((file) => ({
-								name: file.name,
-								size: file.size,
-								isDirectory: file.type === 2,
-								modifiedAt: file.modifiedAt,
-								permissions: file.permissions,
-							})),
-						},
-						pairedItem: {
-							item: itemIndex,
-						},
+						files: files.map((file) => ({
+							name: file.name,
+							size: file.size,
+							type: file.type === 1 ? 'file' : 'directory',
+							modifiedAt: file.modifiedAt,
+						})),
 					};
 
 				case 'download':
-                                        const binaryPropertyName = context.getNodeParameter('binaryPropertyName', itemIndex) as string;
-                                        const chunks: Buffer[] = [];
-                                        const writable = new Writable({
-                                                write(chunk, _enc, cb) {
-                                                        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-                                                        cb();
-                                                },
-                                        });
-                                        await client.downloadTo(writable, remotePath);
-                                        const buffer = Buffer.concat(chunks);
+					const binaryPropertyName = this.getNodeParameter('binaryPropertyName', itemIndex) as string;
+					const { Writable } = require('stream');
+					const chunks: Buffer[] = [];
 					
-					return {
-						json: {
-							fileName: path.basename(remotePath),
-							fileSize: buffer.length,
-						},
-						binary: {
-							[binaryPropertyName]: {
-								data: buffer.toString('base64'),
-								mimeType: 'application/octet-stream',
-								fileName: path.basename(remotePath),
-							},
-						},
-						pairedItem: {
-							item: itemIndex,
-						},
+					const downloadStream = new Writable({
+						write(chunk: Buffer, _encoding: any, callback: any) {
+							chunks.push(chunk);
+							callback();
+						}
+					});
+					
+					await client.downloadTo(downloadStream, remotePath);
+					const downloadBuffer = Buffer.concat(chunks);
+					
+					const binaryData: IBinaryData = {
+						data: downloadBuffer.toString('base64'),
+						mimeType: 'application/octet-stream',
+						fileName: basename(remotePath),
 					};
 
-                                case 'upload':
-                                        const binaryData = context.getNodeParameter('binaryData', itemIndex) as boolean;
-                                        let uploadBuffer: Buffer;
-
-                                        if (binaryData) {
-                                                const binaryPropertyName = context.getNodeParameter('binaryPropertyName', itemIndex) as string;
-                                                const binaryDataBuffer = await context.helpers.getBinaryDataBuffer(itemIndex, binaryPropertyName);
-                                                uploadBuffer = binaryDataBuffer;
-                                        } else {
-                                                const fileContent = context.getNodeParameter('fileContent', itemIndex) as string;
-                                                uploadBuffer = Buffer.from(fileContent);
-                                        }
-
-                                        const stream = Readable.from(uploadBuffer);
-                                        await client.uploadFrom(stream, remotePath);
 					return {
-						json: {
-							success: true,
-							path: remotePath,
-						},
-						pairedItem: {
-							item: itemIndex,
-						},
+						[binaryPropertyName]: binaryData,
 					};
 
-                                case 'delete':
-                                        const recursive_delete = context.getNodeParameter('recursive', itemIndex) as boolean;
+				case 'upload':
+					const binaryData_upload = this.getNodeParameter('binaryData', itemIndex) as boolean;
+					let uploadBuffer: Buffer;
+
+					if (binaryData_upload) {
+						const binaryPropertyName_upload = this.getNodeParameter('binaryPropertyName', itemIndex) as string;
+						const binaryDataBuffer = await this.helpers.getBinaryDataBuffer(itemIndex, binaryPropertyName_upload);
+						uploadBuffer = binaryDataBuffer;
+					} else {
+						const fileContent = this.getNodeParameter('fileContent', itemIndex) as string;
+						uploadBuffer = Buffer.from(fileContent);
+					}
+
+					const { Readable } = require('stream');
+					const uploadStream = new Readable({
+						read() {
+							this.push(uploadBuffer);
+							this.push(null);
+						}
+					});
+					
+					await client.uploadFrom(uploadStream, remotePath);
+					return {
+						success: true,
+						message: `File uploaded to ${remotePath}`,
+					};
+
+				case 'delete':
+					const recursive_delete = this.getNodeParameter('recursive', itemIndex) as boolean;
 					if (recursive_delete) {
 						await client.removeDir(remotePath);
 					} else {
 						await client.remove(remotePath);
 					}
 					return {
-						json: {
-							success: true,
-							path: remotePath,
-						},
-						pairedItem: {
-							item: itemIndex,
-						},
+						success: true,
+						message: `${recursive_delete ? 'Directory' : 'File'} deleted: ${remotePath}`,
 					};
 
-                                case 'rename':
-                                        const newPath = context.getNodeParameter('newPath', itemIndex) as string;
+				case 'rename':
+					const newPath = this.getNodeParameter('newPath', itemIndex) as string;
 					await client.rename(remotePath, newPath);
 					return {
-						json: {
-							success: true,
-							oldPath: remotePath,
-							newPath: newPath,
-						},
-						pairedItem: {
-							item: itemIndex,
-						},
+						success: true,
+						message: `Renamed ${remotePath} to ${newPath}`,
 					};
 
-                                default:
-                                        throw new NodeOperationError(context.getNode(), `Unknown operation: ${operation}`);
+				default:
+					throw new NodeOperationError(this.getNode(), `Unknown operation: ${operation}`);
 			}
+		} catch (error) {
+			if (error instanceof NodeOperationError) {
+				throw error;
+			}
+			throw new NodeOperationError(this.getNode(), `FTP operation failed: ${error instanceof Error ? error.message : String(error)}`);
 		} finally {
-			client.close();
+			try {
+				client.close();
+			} catch (closeError) {
+				// Ignore close errors
+			}
 		}
 	}
 
-        private async executeSftpOperation(
-                context: IExecuteFunctions,
-                itemIndex: number,
-                credentials: any,
-                operation: string,
-        ): Promise<INodeExecutionData> {
+	// @ts-ignore
+	private async executeSftpOperation(
+		this: IExecuteFunctions,
+		itemIndex: number,
+		credentials: IDataObject,
+		operation: string,
+	): Promise<IDataObject> {
 		const client = new SftpClient();
+		const remotePath = this.getNodeParameter('path', itemIndex) as string;
+
+		const sftpOptions: any = {
+			host: credentials.host as string,
+			port: credentials.port as number,
+			username: credentials.username as string,
+		};
+
+		// Configure authentication
+		if (credentials.privateKey) {
+			sftpOptions.privateKey = credentials.privateKey as string;
+			if (credentials.passphrase) {
+				sftpOptions.passphrase = credentials.passphrase as string;
+			}
+		} else {
+			sftpOptions.password = credentials.password as string;
+		}
+
+		// Configure connection options
+		if (credentials.timeout) {
+			sftpOptions.readyTimeout = credentials.timeout as number;
+		}
 
 		try {
-			const connectOptions: any = {
-				host: credentials.host,
-				port: credentials.port || 22,
-				username: credentials.username,
-				password: credentials.password,
-				readyTimeout: credentials.timeout || 10000,
-			};
-
-			if (credentials.privateKey) {
-				connectOptions.privateKey = credentials.privateKey;
-				if (credentials.passphrase) {
-					connectOptions.passphrase = credentials.passphrase;
-				}
-			}
-
-			await client.connect(connectOptions);
-
-                        const remotePath = context.getNodeParameter('path', itemIndex) as string;
+			await client.connect(sftpOptions);
 
 			switch (operation) {
 				case 'list':
-                                        const list = await client.list(remotePath);
-                                        return {
-                                                json: {
-                                                        files: list.map((file: any) => ({
-                                                                name: file.name,
-                                                                size: file.size,
-                                                                isDirectory: file.type === 'd',
-                                                                modifiedAt: file.modifyTime,
-                                                                permissions: file.rights,
-							})),
-						},
-						pairedItem: {
-							item: itemIndex,
-						},
-					};
-
-                                case 'download':
-                                        const binaryPropertyName = context.getNodeParameter('binaryPropertyName', itemIndex) as string;
-                                        const buffer = await client.get(remotePath);
-					
+					const list = await client.list(remotePath);
 					return {
-						json: {
-							fileName: path.basename(remotePath),
-							fileSize: buffer.length,
-						},
-						binary: {
-							[binaryPropertyName]: {
-								data: buffer.toString('base64'),
-								mimeType: 'application/octet-stream',
-								fileName: path.basename(remotePath),
-							},
-						},
-						pairedItem: {
-							item: itemIndex,
-						},
+						files: list.map((file: any) => ({
+							name: file.name,
+							size: file.size,
+							type: file.type === 'd' ? 'directory' : 'file',
+							modifiedAt: file.modifyTime,
+						})),
 					};
 
-                                case 'upload':
-                                        const binaryData = context.getNodeParameter('binaryData', itemIndex) as boolean;
+				case 'download':
+					const binaryPropertyName = this.getNodeParameter('binaryPropertyName', itemIndex) as string;
+					const buffer = await client.get(remotePath);
+					
+					const binaryData: IBinaryData = {
+						data: (buffer as Buffer).toString('base64'),
+						mimeType: 'application/octet-stream',
+						fileName: basename(remotePath),
+					};
+
+					return {
+						[binaryPropertyName]: binaryData,
+					};
+
+				case 'upload':
+					const binaryData_upload = this.getNodeParameter('binaryData', itemIndex) as boolean;
 					let uploadBuffer: Buffer;
 
-					if (binaryData) {
-                                                const binaryPropertyName = context.getNodeParameter('binaryPropertyName', itemIndex) as string;
-                                                const binaryDataBuffer = await context.helpers.getBinaryDataBuffer(itemIndex, binaryPropertyName);
-                                                uploadBuffer = binaryDataBuffer;
+					if (binaryData_upload) {
+						const binaryPropertyName_upload = this.getNodeParameter('binaryPropertyName', itemIndex) as string;
+						const binaryDataBuffer = await this.helpers.getBinaryDataBuffer(itemIndex, binaryPropertyName_upload);
+						uploadBuffer = binaryDataBuffer;
 					} else {
-                                                const fileContent = context.getNodeParameter('fileContent', itemIndex) as string;
+						const fileContent = this.getNodeParameter('fileContent', itemIndex) as string;
 						uploadBuffer = Buffer.from(fileContent);
 					}
 
 					await client.put(uploadBuffer, remotePath);
 					return {
-						json: {
-							success: true,
-							path: remotePath,
-						},
-						pairedItem: {
-							item: itemIndex,
-						},
+						success: true,
+						message: `File uploaded to ${remotePath}`,
 					};
 
-                                case 'delete':
-                                        const recursive_delete = context.getNodeParameter('recursive', itemIndex) as boolean;
+				case 'delete':
+					const recursive_delete = this.getNodeParameter('recursive', itemIndex) as boolean;
 					if (recursive_delete) {
 						await client.rmdir(remotePath, true);
 					} else {
 						await client.delete(remotePath);
 					}
 					return {
-						json: {
-							success: true,
-							path: remotePath,
-						},
-						pairedItem: {
-							item: itemIndex,
-						},
+						success: true,
+						message: `${recursive_delete ? 'Directory' : 'File'} deleted: ${remotePath}`,
 					};
 
-                                case 'rename':
-                                        const newPath = context.getNodeParameter('newPath', itemIndex) as string;
+				case 'rename':
+					const newPath = this.getNodeParameter('newPath', itemIndex) as string;
 					await client.rename(remotePath, newPath);
 					return {
-						json: {
-							success: true,
-							oldPath: remotePath,
-							newPath: newPath,
-						},
-						pairedItem: {
-							item: itemIndex,
-						},
+						success: true,
+						message: `Renamed ${remotePath} to ${newPath}`,
 					};
 
-                                default:
-                                        throw new NodeOperationError(context.getNode(), `Unknown operation: ${operation}`);
+				default:
+					throw new NodeOperationError(this.getNode(), `Unknown operation: ${operation}`);
 			}
+		} catch (error) {
+			if (error instanceof NodeOperationError) {
+				throw error;
+			}
+			throw new NodeOperationError(this.getNode(), `SFTP operation failed: ${error instanceof Error ? error.message : String(error)}`);
 		} finally {
-			await client.end();
+			try {
+				await client.end();
+			} catch (closeError) {
+				// Ignore close errors
+			}
 		}
 	}
 }
