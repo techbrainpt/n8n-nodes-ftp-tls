@@ -215,6 +215,9 @@ export class FtpTls implements INodeType {
 			}
 			
 			tlsOptions.secureOptions = secureOptions;
+			
+			// Disable connection reuse to prevent TLS data socket issues
+			tlsOptions.keepAlive = false;
 		}
 
 		try {
@@ -233,6 +236,8 @@ export class FtpTls implements INodeType {
 			if (credentials.protocol === 'ftps-explicit' || credentials.protocol === 'ftps-implicit') {
 				// Ensure passive mode for better firewall compatibility
 				(client as any).ftp.passive = true;
+				// Force fresh data connections to prevent TLS reuse issues
+				(client as any).ftp.dataSocketKeepAlive = false;
 			}
 
 			switch (operation) {
@@ -283,6 +288,17 @@ export class FtpTls implements INodeType {
 					} else {
 						const fileContent = context.getNodeParameter('fileContent', itemIndex) as string;
 						uploadBuffer = Buffer.from(fileContent);
+					}
+
+					// For FTPS, ensure connection is still valid before upload
+					if (credentials.protocol === 'ftps-explicit' || credentials.protocol === 'ftps-implicit') {
+						try {
+							// Send a harmless command to verify connection
+							await client.send('NOOP');
+						} catch (noopError) {
+							// Connection might be stale, try to refresh
+							console.log('Connection verification failed, continuing with upload...');
+						}
 					}
 
 					const { Readable } = require('stream');
