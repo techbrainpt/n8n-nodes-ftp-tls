@@ -228,17 +228,11 @@ export class FtpTls implements INodeType {
 			await client.access(tlsOptions);
 			
 			// Configure data channel protection for FTPS
+			// Note: basic-ftp automatically handles PBSZ and PROT commands
+			// We just need to ensure passive mode for better compatibility
 			if (credentials.protocol === 'ftps-explicit' || credentials.protocol === 'ftps-implicit') {
-				try {
-					// Set protection buffer size to 0 (no buffering)
-					await client.send('PBSZ 0');
-					// Set data channel protection to private (encrypted)
-					await client.send('PROT P');
-					// Ensure passive mode for better firewall compatibility
-					(client as any).ftp.passive = true;
-				} catch (protError: any) {
-					console.log('Warning: Could not set data channel protection:', protError.message);
-				}
+				// Ensure passive mode for better firewall compatibility
+				(client as any).ftp.passive = true;
 			}
 
 			switch (operation) {
@@ -292,47 +286,14 @@ export class FtpTls implements INodeType {
 					}
 
 					const { Readable } = require('stream');
-					
-					// Retry upload with different approaches if needed
-					let uploadSuccess = false;
-					let lastError = null;
-					
-					// Try 1: Standard upload with stream
-					try {
-						const uploadStream = new Readable({
-							read() {
-								this.push(uploadBuffer);
-								this.push(null);
-							}
-						});
-						
-						await client.uploadFrom(uploadStream, remotePath);
-						uploadSuccess = true;
-					} catch (error: any) {
-						lastError = error;
-						console.log('Upload attempt 1 failed:', error.message);
-						
-						// Try 2: Upload with cleared data channel protection
-						try {
-							await client.send('PROT C'); // Clear data channel
-							const uploadStream2 = new Readable({
-								read() {
-									this.push(uploadBuffer);
-									this.push(null);
-								}
-							});
-							
-							await client.uploadFrom(uploadStream2, remotePath);
-							uploadSuccess = true;
-						} catch (error2: any) {
-							console.log('Upload attempt 2 failed:', error2.message);
-							lastError = error2;
+					const uploadStream = new Readable({
+						read() {
+							this.push(uploadBuffer);
+							this.push(null);
 						}
-					}
+					});
 					
-					if (!uploadSuccess) {
-						throw lastError || new Error('Upload failed after multiple attempts');
-					}
+					await client.uploadFrom(uploadStream, remotePath);
 					return {
 						success: true,
 						message: `File uploaded to ${remotePath}`,
