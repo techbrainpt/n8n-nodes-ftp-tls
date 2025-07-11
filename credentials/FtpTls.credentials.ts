@@ -143,11 +143,5 @@ export class FtpTls implements ICredentialType {
 		properties: {},
 	};
 
-	test: ICredentialTestRequest = {
-		request: {
-			baseURL: '={{$credentials.host}}',
-			url: '',
-			method: 'GET',
-		},
-	};
+	// Test is handled by the node itself, not via HTTP request
 }
