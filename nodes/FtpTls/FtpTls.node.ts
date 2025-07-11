@@ -197,7 +197,9 @@ export class FtpTls implements INodeType {
 
 		// Configure security based on protocol
 		if (credentials.protocol === 'ftps-explicit' || credentials.protocol === 'ftps-implicit') {
-			tlsOptions.secure = credentials.protocol === 'ftps-implicit';
+			// For FTPS Explicit, use secure: true to enable AUTH TLS
+			// For FTPS Implicit, use secure: 'implicit' 
+			tlsOptions.secure = credentials.protocol === 'ftps-implicit' ? 'implicit' : true;
 			
 			// Configure TLS options to handle certificates properly
 			const secureOptions: any = {
@@ -205,7 +207,6 @@ export class FtpTls implements INodeType {
 				maxVersion: 'TLSv1.3',
 				rejectUnauthorized: false, // Accept self-signed certificates
 				checkServerIdentity: () => undefined, // Skip hostname verification
-				secureProtocol: 'TLSv1_2_method', // Force TLS 1.2+
 			};
 			
 			if (credentials.security === 'strict') {
