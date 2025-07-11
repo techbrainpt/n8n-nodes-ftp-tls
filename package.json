@@ -1,6 +1,6 @@
 {
   "name": "n8n-nodes-ftp-tls",
-  "version": "1.1.9",
+  "version": "1.2.0",
   "description": "Extended FTP node for n8n with TLS/FTPS support",
   "keywords": [
     "n8n-community-node-package",

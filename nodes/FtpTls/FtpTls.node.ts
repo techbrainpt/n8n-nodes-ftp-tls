@@ -290,19 +290,6 @@ export class FtpTls implements INodeType {
 						uploadBuffer = Buffer.from(fileContent);
 					}
 
-					// Ensure directory exists before upload
-					const { dirname } = require('path');
-					const dirPath = dirname(remotePath);
-					
-					if (dirPath !== '.' && dirPath !== '/') {
-						try {
-							await client.ensureDir(dirPath);
-						} catch (dirError: any) {
-							// Directory might already exist or creation failed
-							console.log('Directory creation warning:', dirError.message);
-						}
-					}
-
 					const { Readable } = require('stream');
 					const uploadStream = new Readable({
 						read() {
