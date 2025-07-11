@@ -158,9 +158,9 @@ export class FtpTls implements INodeType {
 
 				let result;
 				if (credentials.protocol === 'sftp') {
-					result = await (this as any).executeSftpOperation.call(this, i, credentials, operation);
+					result = await this.executeSftpOperation(i, credentials, operation);
 				} else {
-					result = await (this as any).executeFtpOperation.call(this, i, credentials, operation);
+					result = await this.executeFtpOperation(i, credentials, operation);
 				}
 
 				returnData.push({ json: result });
@@ -177,9 +177,7 @@ export class FtpTls implements INodeType {
 		return [returnData];
 	}
 
-	// @ts-ignore
 	private async executeFtpOperation(
-		this: IExecuteFunctions,
 		itemIndex: number,
 		credentials: IDataObject,
 		operation: string,
@@ -326,9 +324,7 @@ export class FtpTls implements INodeType {
 		}
 	}
 
-	// @ts-ignore
 	private async executeSftpOperation(
-		this: IExecuteFunctions,
 		itemIndex: number,
 		credentials: IDataObject,
 		operation: string,
