@@ -87,6 +87,40 @@ export class FtpTls implements ICredentialType {
 			description: 'How to deal with security',
 		},
 		{
+			displayName: 'TLS Version',
+			name: 'tlsVersion',
+			type: 'options',
+			displayOptions: {
+				show: {
+					protocol: ['ftps-explicit', 'ftps-implicit'],
+				},
+			},
+			options: [
+				{
+					name: 'Auto (Recommended)',
+					value: 'auto',
+				},
+				{
+					name: 'TLS 1.3',
+					value: 'TLSv1.3',
+				},
+				{
+					name: 'TLS 1.2',
+					value: 'TLSv1.2',
+				},
+				{
+					name: 'TLS 1.1',
+					value: 'TLSv1.1',
+				},
+				{
+					name: 'TLS 1.0',
+					value: 'TLSv1',
+				},
+			],
+			default: 'auto',
+			description: 'TLS version to use for secure connections. Auto tries newest first with fallback.',
+		},
+		{
 			displayName: 'Ignore SSL Issues',
 			name: 'ignoreSSLIssues',
 			type: 'boolean',

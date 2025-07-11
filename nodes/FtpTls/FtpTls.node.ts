@@ -202,13 +202,23 @@ export class FtpTls implements INodeType {
 			// For FTPS Implicit, use secure: 'implicit' 
 			tlsOptions.secure = credentials.protocol === 'ftps-implicit' ? 'implicit' : true;
 			
-			// Configure TLS options to handle certificates properly
+			// Configure TLS options with version fallback support
 			const secureOptions: any = {
-				minVersion: 'TLSv1.2',
-				maxVersion: 'TLSv1.3',
 				rejectUnauthorized: false, // Accept self-signed certificates
 				checkServerIdentity: () => undefined, // Skip hostname verification
 			};
+
+			// Configure TLS version based on user preference or auto-detection
+			const tlsVersion = credentials.tlsVersion || 'auto';
+			if (tlsVersion === 'auto') {
+				// Auto mode: try modern TLS first, fallback to older versions
+				secureOptions.minVersion = 'TLSv1.2';
+				secureOptions.maxVersion = 'TLSv1.3';
+			} else {
+				// Manual TLS version selection
+				secureOptions.minVersion = tlsVersion;
+				secureOptions.maxVersion = tlsVersion;
+			}
 			
 			if (credentials.security === 'strict') {
 				secureOptions.ciphers = 'ECDHE+AESGCM:ECDHE+CHACHA20:DHE+AESGCM:DHE+CHACHA20:!aNULL:!MD5:!DSS';
@@ -221,14 +231,57 @@ export class FtpTls implements INodeType {
 		}
 
 		try {
-			// Set up TLS event handlers for certificate validation
+			// Attempt connection with auto-fallback for TLS version compatibility
 			if (credentials.protocol === 'ftps-explicit' || credentials.protocol === 'ftps-implicit') {
-				client.ftp.socket?.on('secureConnect', () => {
-					// Certificate accepted - connection is secure
-				});
+				const tlsVersion = credentials.tlsVersion || 'auto';
+				
+				if (tlsVersion === 'auto') {
+					// Auto mode: try connecting with progressively older TLS versions
+					const tlsVersions = ['TLSv1.3', 'TLSv1.2', 'TLSv1.1', 'TLSv1'];
+					let lastError: any;
+					
+					for (const version of tlsVersions) {
+						try {
+							// Update TLS version for this attempt
+							tlsOptions.secureOptions.minVersion = version;
+							tlsOptions.secureOptions.maxVersion = version;
+							
+							// Set up TLS event handlers for certificate validation
+							client.ftp.socket?.on('secureConnect', () => {
+								// Certificate accepted - connection is secure
+							});
+							
+							await client.access(tlsOptions);
+							break; // Success - exit the loop
+						} catch (error: any) {
+							lastError = error;
+							// If this is a TLS version error, try next version
+							if (error.message?.includes('wrong version number') || 
+								error.message?.includes('SSL') || 
+								error.message?.includes('TLS')) {
+								continue;
+							}
+							// If it's not a TLS error, re-throw immediately
+							throw error;
+						}
+					}
+					
+					// If we tried all versions and still failed, throw the last error
+					if (lastError && !client.ftp.socket) {
+						throw lastError;
+					}
+				} else {
+					// Manual TLS version - single attempt
+					client.ftp.socket?.on('secureConnect', () => {
+						// Certificate accepted - connection is secure
+					});
+					
+					await client.access(tlsOptions);
+				}
+			} else {
+				// Non-FTPS connection
+				await client.access(tlsOptions);
 			}
-			
-			await client.access(tlsOptions);
 			
 			// Configure data channel protection for FTPS
 			// Note: basic-ftp automatically handles PBSZ and PROT commands
