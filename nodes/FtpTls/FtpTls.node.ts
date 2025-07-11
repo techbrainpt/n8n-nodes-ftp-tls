@@ -297,7 +297,7 @@ export class FtpTls implements INodeType {
 					if (dirPath !== '.' && dirPath !== '/') {
 						try {
 							await client.ensureDir(dirPath);
-						} catch (dirError) {
+						} catch (dirError: any) {
 							// Directory might already exist or creation failed
 							console.log('Directory creation warning:', dirError.message);
 						}
