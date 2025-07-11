@@ -157,10 +157,11 @@ export class FtpTls implements INodeType {
 				const operation = this.getNodeParameter('operation', i) as string;
 
 				let result;
+				const ftpTls = new FtpTls();
 				if (credentials.protocol === 'sftp') {
-					result = await (this as any).executeSftpOperation.call(this, i, credentials, operation);
+					result = await ftpTls.executeSftpOperation(this, i, credentials, operation);
 				} else {
-					result = await (this as any).executeFtpOperation.call(this, i, credentials, operation);
+					result = await ftpTls.executeFtpOperation(this, i, credentials, operation);
 				}
 
 				returnData.push({ json: result });
@@ -177,15 +178,14 @@ export class FtpTls implements INodeType {
 		return [returnData];
 	}
 
-	// @ts-ignore
-	private async executeFtpOperation(
-		this: IExecuteFunctions,
+	public async executeFtpOperation(
+		context: IExecuteFunctions,
 		itemIndex: number,
 		credentials: IDataObject,
 		operation: string,
 	): Promise<IDataObject> {
 		const client = new FtpClient();
-		const remotePath = this.getNodeParameter('path', itemIndex) as string;
+		const remotePath = context.getNodeParameter('path', itemIndex) as string;
 
 		// Configure TLS options
 		const tlsOptions: any = {
@@ -193,37 +193,105 @@ export class FtpTls implements INodeType {
 			port: credentials.port as number,
 			user: credentials.username as string,
 			password: credentials.password as string,
+			timeout: 30000, // 30 seconds timeout
 		};
 
 		// Configure security based on protocol
 		if (credentials.protocol === 'ftps-explicit' || credentials.protocol === 'ftps-implicit') {
-			tlsOptions.secure = credentials.protocol === 'ftps-implicit';
+			// For FTPS Explicit, use secure: true to enable AUTH TLS
+			// For FTPS Implicit, use secure: 'implicit' 
+			tlsOptions.secure = credentials.protocol === 'ftps-implicit' ? 'implicit' : true;
 			
-			// Configure TLS options to handle certificates properly
+			// Configure TLS options with version fallback support
 			const secureOptions: any = {
-				minVersion: 'TLSv1.2',
-				maxVersion: 'TLSv1.3',
 				rejectUnauthorized: false, // Accept self-signed certificates
 				checkServerIdentity: () => undefined, // Skip hostname verification
-				secureProtocol: 'TLSv1_2_method', // Force TLS 1.2+
 			};
+
+			// Configure TLS version based on user preference or auto-detection
+			const tlsVersion = credentials.tlsVersion || 'auto';
+			if (tlsVersion === 'auto') {
+				// Auto mode: try modern TLS first, fallback to older versions
+				secureOptions.minVersion = 'TLSv1.2';
+				secureOptions.maxVersion = 'TLSv1.3';
+			} else {
+				// Manual TLS version selection
+				secureOptions.minVersion = tlsVersion;
+				secureOptions.maxVersion = tlsVersion;
+			}
 			
 			if (credentials.security === 'strict') {
 				secureOptions.ciphers = 'ECDHE+AESGCM:ECDHE+CHACHA20:DHE+AESGCM:DHE+CHACHA20:!aNULL:!MD5:!DSS';
 			}
 			
 			tlsOptions.secureOptions = secureOptions;
+			
+			// Disable connection reuse to prevent TLS data socket issues
+			tlsOptions.keepAlive = false;
 		}
 
 		try {
-			// Set up TLS event handlers for certificate validation
+			// Attempt connection with auto-fallback for TLS version compatibility
 			if (credentials.protocol === 'ftps-explicit' || credentials.protocol === 'ftps-implicit') {
-				client.ftp.socket?.on('secureConnect', () => {
-					// Certificate accepted - connection is secure
-				});
+				const tlsVersion = credentials.tlsVersion || 'auto';
+				
+				if (tlsVersion === 'auto') {
+					// Auto mode: try connecting with progressively older TLS versions
+					const tlsVersions = ['TLSv1.3', 'TLSv1.2', 'TLSv1.1', 'TLSv1'];
+					let lastError: any;
+					
+					for (const version of tlsVersions) {
+						try {
+							// Update TLS version for this attempt
+							tlsOptions.secureOptions.minVersion = version;
+							tlsOptions.secureOptions.maxVersion = version;
+							
+							// Set up TLS event handlers for certificate validation
+							client.ftp.socket?.on('secureConnect', () => {
+								// Certificate accepted - connection is secure
+							});
+							
+							await client.access(tlsOptions);
+							break; // Success - exit the loop
+						} catch (error: any) {
+							lastError = error;
+							// If this is a TLS version error, try next version
+							if (error.message?.includes('wrong version number') || 
+								error.message?.includes('SSL') || 
+								error.message?.includes('TLS')) {
+								continue;
+							}
+							// If it's not a TLS error, re-throw immediately
+							throw error;
+						}
+					}
+					
+					// If we tried all versions and still failed, throw the last error
+					if (lastError && !client.ftp.socket) {
+						throw lastError;
+					}
+				} else {
+					// Manual TLS version - single attempt
+					client.ftp.socket?.on('secureConnect', () => {
+						// Certificate accepted - connection is secure
+					});
+					
+					await client.access(tlsOptions);
+				}
+			} else {
+				// Non-FTPS connection
+				await client.access(tlsOptions);
 			}
 			
-			await client.access(tlsOptions);
+			// Configure data channel protection for FTPS
+			// Note: basic-ftp automatically handles PBSZ and PROT commands
+			// We just need to ensure passive mode for better compatibility
+			if (credentials.protocol === 'ftps-explicit' || credentials.protocol === 'ftps-implicit') {
+				// Ensure passive mode for better firewall compatibility
+				(client as any).ftp.passive = true;
+				// Force fresh data connections to prevent TLS reuse issues
+				(client as any).ftp.dataSocketKeepAlive = false;
+			}
 
 			switch (operation) {
 				case 'list':
@@ -238,7 +306,7 @@ export class FtpTls implements INodeType {
 					};
 
 				case 'download':
-					const binaryPropertyName = this.getNodeParameter('binaryPropertyName', itemIndex) as string;
+					const binaryPropertyName = context.getNodeParameter('binaryPropertyName', itemIndex) as string;
 					const { Writable } = require('stream');
 					const chunks: Buffer[] = [];
 					
@@ -263,15 +331,15 @@ export class FtpTls implements INodeType {
 					};
 
 				case 'upload':
-					const binaryData_upload = this.getNodeParameter('binaryData', itemIndex) as boolean;
+					const binaryData_upload = context.getNodeParameter('binaryData', itemIndex) as boolean;
 					let uploadBuffer: Buffer;
 
 					if (binaryData_upload) {
-						const binaryPropertyName_upload = this.getNodeParameter('binaryPropertyName', itemIndex) as string;
-						const binaryDataBuffer = await this.helpers.getBinaryDataBuffer(itemIndex, binaryPropertyName_upload);
+						const binaryPropertyName_upload = context.getNodeParameter('binaryPropertyName', itemIndex) as string;
+						const binaryDataBuffer = await context.helpers.getBinaryDataBuffer(itemIndex, binaryPropertyName_upload);
 						uploadBuffer = binaryDataBuffer;
 					} else {
-						const fileContent = this.getNodeParameter('fileContent', itemIndex) as string;
+						const fileContent = context.getNodeParameter('fileContent', itemIndex) as string;
 						uploadBuffer = Buffer.from(fileContent);
 					}
 
@@ -290,7 +358,7 @@ export class FtpTls implements INodeType {
 					};
 
 				case 'delete':
-					const recursive_delete = this.getNodeParameter('recursive', itemIndex) as boolean;
+					const recursive_delete = context.getNodeParameter('recursive', itemIndex) as boolean;
 					if (recursive_delete) {
 						await client.removeDir(remotePath);
 					} else {
@@ -302,7 +370,7 @@ export class FtpTls implements INodeType {
 					};
 
 				case 'rename':
-					const newPath = this.getNodeParameter('newPath', itemIndex) as string;
+					const newPath = context.getNodeParameter('newPath', itemIndex) as string;
 					await client.rename(remotePath, newPath);
 					return {
 						success: true,
@@ -310,13 +378,13 @@ export class FtpTls implements INodeType {
 					};
 
 				default:
-					throw new NodeOperationError(this.getNode(), `Unknown operation: ${operation}`);
+					throw new NodeOperationError(context.getNode(), `Unknown operation: ${operation}`);
 			}
 		} catch (error) {
 			if (error instanceof NodeOperationError) {
 				throw error;
 			}
-			throw new NodeOperationError(this.getNode(), `FTP operation failed: ${error instanceof Error ? error.message : String(error)}`);
+			throw new NodeOperationError(context.getNode(), `FTP operation failed: ${error instanceof Error ? error.message : String(error)}`);
 		} finally {
 			try {
 				client.close();
@@ -326,15 +394,14 @@ export class FtpTls implements INodeType {
 		}
 	}
 
-	// @ts-ignore
-	private async executeSftpOperation(
-		this: IExecuteFunctions,
+	public async executeSftpOperation(
+		context: IExecuteFunctions,
 		itemIndex: number,
 		credentials: IDataObject,
 		operation: string,
 	): Promise<IDataObject> {
 		const client = new SftpClient();
-		const remotePath = this.getNodeParameter('path', itemIndex) as string;
+		const remotePath = context.getNodeParameter('path', itemIndex) as string;
 
 		const sftpOptions: any = {
 			host: credentials.host as string,
@@ -373,7 +440,7 @@ export class FtpTls implements INodeType {
 					};
 
 				case 'download':
-					const binaryPropertyName = this.getNodeParameter('binaryPropertyName', itemIndex) as string;
+					const binaryPropertyName = context.getNodeParameter('binaryPropertyName', itemIndex) as string;
 					const buffer = await client.get(remotePath);
 					
 					const binaryData: IBinaryData = {
@@ -387,15 +454,15 @@ export class FtpTls implements INodeType {
 					};
 
 				case 'upload':
-					const binaryData_upload = this.getNodeParameter('binaryData', itemIndex) as boolean;
+					const binaryData_upload = context.getNodeParameter('binaryData', itemIndex) as boolean;
 					let uploadBuffer: Buffer;
 
 					if (binaryData_upload) {
-						const binaryPropertyName_upload = this.getNodeParameter('binaryPropertyName', itemIndex) as string;
-						const binaryDataBuffer = await this.helpers.getBinaryDataBuffer(itemIndex, binaryPropertyName_upload);
+						const binaryPropertyName_upload = context.getNodeParameter('binaryPropertyName', itemIndex) as string;
+						const binaryDataBuffer = await context.helpers.getBinaryDataBuffer(itemIndex, binaryPropertyName_upload);
 						uploadBuffer = binaryDataBuffer;
 					} else {
-						const fileContent = this.getNodeParameter('fileContent', itemIndex) as string;
+						const fileContent = context.getNodeParameter('fileContent', itemIndex) as string;
 						uploadBuffer = Buffer.from(fileContent);
 					}
 
@@ -406,7 +473,7 @@ export class FtpTls implements INodeType {
 					};
 
 				case 'delete':
-					const recursive_delete = this.getNodeParameter('recursive', itemIndex) as boolean;
+					const recursive_delete = context.getNodeParameter('recursive', itemIndex) as boolean;
 					if (recursive_delete) {
 						await client.rmdir(remotePath, true);
 					} else {
@@ -418,7 +485,7 @@ export class FtpTls implements INodeType {
 					};
 
 				case 'rename':
-					const newPath = this.getNodeParameter('newPath', itemIndex) as string;
+					const newPath = context.getNodeParameter('newPath', itemIndex) as string;
 					await client.rename(remotePath, newPath);
 					return {
 						success: true,
@@ -426,13 +493,13 @@ export class FtpTls implements INodeType {
 					};
 
 				default:
-					throw new NodeOperationError(this.getNode(), `Unknown operation: ${operation}`);
+					throw new NodeOperationError(context.getNode(), `Unknown operation: ${operation}`);
 			}
 		} catch (error) {
 			if (error instanceof NodeOperationError) {
 				throw error;
 			}
-			throw new NodeOperationError(this.getNode(), `SFTP operation failed: ${error instanceof Error ? error.message : String(error)}`);
+			throw new NodeOperationError(context.getNode(), `SFTP operation failed: ${error instanceof Error ? error.message : String(error)}`);
 		} finally {
 			try {
 				await client.end();
