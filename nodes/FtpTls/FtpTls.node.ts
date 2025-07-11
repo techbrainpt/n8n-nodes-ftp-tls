@@ -235,8 +235,8 @@ export class FtpTls implements INodeType {
 					// Set data channel protection to private (encrypted)
 					await client.send('PROT P');
 					// Ensure passive mode for better firewall compatibility
-					client.ftp.passive = true;
-				} catch (protError) {
+					(client as any).ftp.passive = true;
+				} catch (protError: any) {
 					console.log('Warning: Could not set data channel protection:', protError.message);
 				}
 			}
