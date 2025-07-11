@@ -158,9 +158,9 @@ export class FtpTls implements INodeType {
 
 				let result;
 				if (credentials.protocol === 'sftp') {
-					result = await this.executeSftpOperation.call(this, i, credentials, operation);
+					result = await (this as any).executeSftpOperation(i, credentials, operation);
 				} else {
-					result = await this.executeFtpOperation.call(this, i, credentials, operation);
+					result = await (this as any).executeFtpOperation(i, credentials, operation);
 				}
 
 				returnData.push({ json: result });
@@ -177,14 +177,14 @@ export class FtpTls implements INodeType {
 		return [returnData];
 	}
 
+	// @ts-ignore
 	private async executeFtpOperation(
-		this: IExecuteFunctions,
 		itemIndex: number,
 		credentials: IDataObject,
 		operation: string,
 	): Promise<IDataObject> {
 		const client = new FtpClient();
-		const remotePath = this.getNodeParameter('path', itemIndex) as string;
+		const remotePath = (this as any).getNodeParameter('path', itemIndex) as string;
 
 		// Configure TLS options
 		const tlsOptions: any = {
@@ -237,7 +237,7 @@ export class FtpTls implements INodeType {
 					};
 
 				case 'download':
-					const binaryPropertyName = this.getNodeParameter('binaryPropertyName', itemIndex) as string;
+					const binaryPropertyName = (this as any).getNodeParameter('binaryPropertyName', itemIndex) as string;
 					const { Writable } = require('stream');
 					const chunks: Buffer[] = [];
 					
@@ -262,15 +262,15 @@ export class FtpTls implements INodeType {
 					};
 
 				case 'upload':
-					const binaryData_upload = this.getNodeParameter('binaryData', itemIndex) as boolean;
+					const binaryData_upload = (this as any).getNodeParameter('binaryData', itemIndex) as boolean;
 					let uploadBuffer: Buffer;
 
 					if (binaryData_upload) {
-						const binaryPropertyName_upload = this.getNodeParameter('binaryPropertyName', itemIndex) as string;
-						const binaryDataBuffer = await this.helpers.getBinaryDataBuffer(itemIndex, binaryPropertyName_upload);
+						const binaryPropertyName_upload = (this as any).getNodeParameter('binaryPropertyName', itemIndex) as string;
+						const binaryDataBuffer = await (this as any).helpers.getBinaryDataBuffer(itemIndex, binaryPropertyName_upload);
 						uploadBuffer = binaryDataBuffer;
 					} else {
-						const fileContent = this.getNodeParameter('fileContent', itemIndex) as string;
+						const fileContent = (this as any).getNodeParameter('fileContent', itemIndex) as string;
 						uploadBuffer = Buffer.from(fileContent);
 					}
 
@@ -289,7 +289,7 @@ export class FtpTls implements INodeType {
 					};
 
 				case 'delete':
-					const recursive_delete = this.getNodeParameter('recursive', itemIndex) as boolean;
+					const recursive_delete = (this as any).getNodeParameter('recursive', itemIndex) as boolean;
 					if (recursive_delete) {
 						await client.removeDir(remotePath);
 					} else {
@@ -301,7 +301,7 @@ export class FtpTls implements INodeType {
 					};
 
 				case 'rename':
-					const newPath = this.getNodeParameter('newPath', itemIndex) as string;
+					const newPath = (this as any).getNodeParameter('newPath', itemIndex) as string;
 					await client.rename(remotePath, newPath);
 					return {
 						success: true,
@@ -309,13 +309,13 @@ export class FtpTls implements INodeType {
 					};
 
 				default:
-					throw new NodeOperationError(this.getNode(), `Unknown operation: ${operation}`);
+					throw new NodeOperationError((this as any).getNode(), `Unknown operation: ${operation}`);
 			}
 		} catch (error) {
 			if (error instanceof NodeOperationError) {
 				throw error;
 			}
-			throw new NodeOperationError(this.getNode(), `FTP operation failed: ${error instanceof Error ? error.message : String(error)}`);
+			throw new NodeOperationError((this as any).getNode(), `FTP operation failed: ${error instanceof Error ? error.message : String(error)}`);
 		} finally {
 			try {
 				client.close();
@@ -325,14 +325,14 @@ export class FtpTls implements INodeType {
 		}
 	}
 
+	// @ts-ignore
 	private async executeSftpOperation(
-		this: IExecuteFunctions,
 		itemIndex: number,
 		credentials: IDataObject,
 		operation: string,
 	): Promise<IDataObject> {
 		const client = new SftpClient();
-		const remotePath = this.getNodeParameter('path', itemIndex) as string;
+		const remotePath = (this as any).getNodeParameter('path', itemIndex) as string;
 
 		const sftpOptions: any = {
 			host: credentials.host as string,
@@ -371,7 +371,7 @@ export class FtpTls implements INodeType {
 					};
 
 				case 'download':
-					const binaryPropertyName = this.getNodeParameter('binaryPropertyName', itemIndex) as string;
+					const binaryPropertyName = (this as any).getNodeParameter('binaryPropertyName', itemIndex) as string;
 					const buffer = await client.get(remotePath);
 					
 					const binaryData: IBinaryData = {
@@ -385,15 +385,15 @@ export class FtpTls implements INodeType {
 					};
 
 				case 'upload':
-					const binaryData_upload = this.getNodeParameter('binaryData', itemIndex) as boolean;
+					const binaryData_upload = (this as any).getNodeParameter('binaryData', itemIndex) as boolean;
 					let uploadBuffer: Buffer;
 
 					if (binaryData_upload) {
-						const binaryPropertyName_upload = this.getNodeParameter('binaryPropertyName', itemIndex) as string;
-						const binaryDataBuffer = await this.helpers.getBinaryDataBuffer(itemIndex, binaryPropertyName_upload);
+						const binaryPropertyName_upload = (this as any).getNodeParameter('binaryPropertyName', itemIndex) as string;
+						const binaryDataBuffer = await (this as any).helpers.getBinaryDataBuffer(itemIndex, binaryPropertyName_upload);
 						uploadBuffer = binaryDataBuffer;
 					} else {
-						const fileContent = this.getNodeParameter('fileContent', itemIndex) as string;
+						const fileContent = (this as any).getNodeParameter('fileContent', itemIndex) as string;
 						uploadBuffer = Buffer.from(fileContent);
 					}
 
@@ -404,7 +404,7 @@ export class FtpTls implements INodeType {
 					};
 
 				case 'delete':
-					const recursive_delete = this.getNodeParameter('recursive', itemIndex) as boolean;
+					const recursive_delete = (this as any).getNodeParameter('recursive', itemIndex) as boolean;
 					if (recursive_delete) {
 						await client.rmdir(remotePath, true);
 					} else {
@@ -416,7 +416,7 @@ export class FtpTls implements INodeType {
 					};
 
 				case 'rename':
-					const newPath = this.getNodeParameter('newPath', itemIndex) as string;
+					const newPath = (this as any).getNodeParameter('newPath', itemIndex) as string;
 					await client.rename(remotePath, newPath);
 					return {
 						success: true,
@@ -424,13 +424,13 @@ export class FtpTls implements INodeType {
 					};
 
 				default:
-					throw new NodeOperationError(this.getNode(), `Unknown operation: ${operation}`);
+					throw new NodeOperationError((this as any).getNode(), `Unknown operation: ${operation}`);
 			}
 		} catch (error) {
 			if (error instanceof NodeOperationError) {
 				throw error;
 			}
-			throw new NodeOperationError(this.getNode(), `SFTP operation failed: ${error instanceof Error ? error.message : String(error)}`);
+			throw new NodeOperationError((this as any).getNode(), `SFTP operation failed: ${error instanceof Error ? error.message : String(error)}`);
 		} finally {
 			try {
 				await client.end();
