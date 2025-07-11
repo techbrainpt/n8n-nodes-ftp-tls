@@ -290,30 +290,62 @@ export class FtpTls implements INodeType {
 						uploadBuffer = Buffer.from(fileContent);
 					}
 
-					// For FTPS, ensure connection is still valid before upload
+					// For FTPS uploads, use a fresh connection to avoid TLS data socket issues
 					if (credentials.protocol === 'ftps-explicit' || credentials.protocol === 'ftps-implicit') {
+						// Close current connection
 						try {
-							// Send a harmless command to verify connection
-							await client.send('NOOP');
-						} catch (noopError) {
-							// Connection might be stale, try to refresh
-							console.log('Connection verification failed, continuing with upload...');
+							client.close();
+						} catch (closeError) {
+							// Ignore close errors
 						}
+						
+						// Create fresh client and reconnect
+						const uploadClient = new FtpClient();
+						try {
+							const uploadTlsOptions = { ...tlsOptions };
+							await uploadClient.access(uploadTlsOptions);
+							
+							// Configure for upload
+							(uploadClient as any).ftp.passive = true;
+							(uploadClient as any).ftp.dataSocketKeepAlive = false;
+							
+							const { Readable } = require('stream');
+							const uploadStream = new Readable({
+								read() {
+									this.push(uploadBuffer);
+									this.push(null);
+								}
+							});
+							
+							await uploadClient.uploadFrom(uploadStream, remotePath);
+							
+							// Close upload connection
+							uploadClient.close();
+							
+							return {
+								success: true,
+								message: `File uploaded to ${remotePath}`,
+							};
+						} catch (uploadError) {
+							uploadClient.close();
+							throw uploadError;
+						}
+					} else {
+						// Plain FTP upload
+						const { Readable } = require('stream');
+						const uploadStream = new Readable({
+							read() {
+								this.push(uploadBuffer);
+								this.push(null);
+							}
+						});
+						
+						await client.uploadFrom(uploadStream, remotePath);
+						return {
+							success: true,
+							message: `File uploaded to ${remotePath}`,
+						};
 					}
-
-					const { Readable } = require('stream');
-					const uploadStream = new Readable({
-						read() {
-							this.push(uploadBuffer);
-							this.push(null);
-						}
-					});
-					
-					await client.uploadFrom(uploadStream, remotePath);
-					return {
-						success: true,
-						message: `File uploaded to ${remotePath}`,
-					};
 
 				case 'delete':
 					const recursive_delete = context.getNodeParameter('recursive', itemIndex) as boolean;
